@@ -1,0 +1,271 @@
+---
+title: "Reproducible Research Assignment - Storm Data Analysis"
+output:
+  html_document: default
+  pdf_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, cache = TRUE, message = FALSE)
+```
+
+## Synopsis
+
+Storms and other severe weather events can cause both public health and economic problems for communities and municipalities. Many severe events can result in fatalities, injuries, and property damage, and preventing such outcomes to the extent possible is a key concern.
+
+This project involves exploring the U.S. National Oceanic and Atmospheric Administration's (NOAA) storm database. This database tracks characteristics of major storms and weather events in the United States, including when and where they occur, as well as estimates of any fatalities, injuries, and property damage.
+
+## Description of Data
+
+The data for this assignment come in the form of a comma-separated-value file compressed via the bzip2 algorithm to reduce its size. You can download the file from [here](https://d396qusza40orc.cloudfront.net/repdata%2Fdata%2FStormData.csv.bz2).
+
+There is also some documentation of the database available. Here you will find how some of the variables are constructed/defined.
+
+1. [National Weather Service Storm Data Documentation](https://d396qusza40orc.cloudfront.net/repdata%2Fpeer2_doc%2Fpd01016005curr.pdf)
+2. [National Climatic Data Center Storm Events FAQ](https://d396qusza40orc.cloudfront.net/repdata%2Fpeer2_doc%2FNCDC%20Storm%20Events-FAQ%20Page.pdf)
+
+The events in the database start in the year 1950 and end in November 2011. In the earlier years of the database there are generally fewer events recorded, most likely due to a lack of good records. More recent years should be considered more complete.
+
+## Data Processing
+
+To begin, we set the working directory and download the file onto local drive. We then read the document into R and convert to a tibble using the *dplyr* package. AS the file is large, I have requested a beep alert when reading is completed.
+
+```{r}
+library(dplyr); library(ggplot2)
+setwd('/Users/edmondlowjy/datasciencecoursera/Reproducible-Research/Week\ 4')
+download.file(url='https://d396qusza40orc.cloudfront.net/repdata%2Fdata%2FStormData.csv.bz2',destfile='./stormdata.csv.bz2',method='curl')
+stormdata=read.csv(file='stormdata.csv.bz2',stringsAsFactors=F); beepr::beep()
+stormdata<-tbl_df(stormdata) %>%
+  mutate(EVTYPE=trimws(toupper(EVTYPE)))
+stormdata
+evnames=unique(stormdata$EVTYPE); length(evnames)
+```
+
+From this, we can see that there are 890 unique event types described by the data. However, the National Weather Service only recognizes 48 official Event Types as shown below.
+
+```{r}
+event_types=c("ASTRONOMICAL LOW TIDE","AVALANCHE","BLIZZARD","COASTAL FLOOD",
+              "COLD/WIND CHILL","DEBRIS FLOW","DENSE FOG","DENSE SMOKE","DROUGHT",
+              "DUST DEVIL","DUST STORM","EXCESSIVE HEAT","EXTREME COLD/WIND CHILL",
+              "FLASH FLOOD","FLOOD","FROST/FREEZE","FUNNEL CLOUD","FREEZING FOG","HAIL",
+              "HEAT","HEAVY RAIN","HEAVY SNOW","HIGH SURF","HIGH WIND","HURRICANE (TYPHOON)",
+              "ICE STORM","LAKE-EFFECT SNOW","LAKESHORE FLOOD","LIGHTNING","MARINE HAIL",
+              "MARINE HIGH WIND","MARINE STRONG WIND","MARINE THUNDERSTORM WIND",
+              "RIP CURRENT","SEICHE","SLEET","STORM SURGE/TIDE","STRONG WIND",
+              "THUNDERSTORM WIND","TORNADO","TROPICAL DEPRESSION","TROPICAL STORM","TSUNAMI",
+              "VOLCANIC ASH","WATERSPOUT","WILDFIRE","WINTER STORM","WINTER WEATHER")
+```
+
+There is a need to map the event types described by EVTYPE back to the recognized official names. We first adopt two approaches to this:
+
+1. Use *grep* to find the set of official Event Types described in EVTYPE by partial matching, then selecting the shortest (by character length) Event Type as the 'correct' one. E.g. A 'Flood' in EVTYPE would match to 'Flood', 'Coastal Flood' and 'Flash Flood' using *grep*. We choose the shorter 'Flood' as the correct match.
+2. Using *grep* to find the set of EVTYPE described in the official Event Types by partial matching. A list manipulation is performed to obtain the possible matches for each EVTYPE, following which we then choose the longest (by character length) Event Type as the 'correct' match. E.g. The 'EXCESSIVE HEAT/DROUGHT' EVTYPE would match the Event Types 'DROUGHT', 'EXCESSIVE HEAT', and 'HEAT'. We choose the longest 'EXCESSIVE HEAT' as the correct match.
+
+Correspondingly, we write two functions *textmatcher* and *textmatcher2* to produce the matched lists.
+
+```{r}
+### First attempt to find exact matches using grep - finding EVTYPE within event_types
+textmatcher=function(textvec,refvec){ #returns event_type of min char length that matches exactly 
+  temp=lapply(textvec,FUN=function(text){
+    matchvec=grep(text,refvec,fixed = T,value = T)
+    indexselect=which.min(nchar(matchvec))
+    matchvec[indexselect]
+    })
+  return(temp)
+}
+
+# A list of event_type matches for each unique stormdata$EVTYPE after 1st attempt
+textmatched1=textmatcher(evnames,event_types); names(textmatched1)<-evnames
+
+# A vector of (unique) unmatched elements from stormdata$EVTYPE after 1st matching attempt
+notmatched=evnames[sapply(textmatched1,FUN=function(textlist){length(unlist(textlist))==0})]
+
+### Second attempt to find exact matches using grep - finding event_types within EVTYPE
+
+textmatcher2=function(textvec,refvec){
+  templist=lapply(textvec,FUN=function(text){grep(text,refvec,fixed=T)})
+  reslist=as.list(rep(NA,times=length(refvec)))
+  for(i in 1:length(templist)){ # 1:48
+    if(length(templist[[i]]!=0)){ # if some EVTYPES are found for selected event_type
+      for(j in templist[[i]]){ # for element in vector of matches for selected event_type
+        reslist[[j]]=c(reslist[[j]],textvec[i])
+      }
+    }
+  }
+  names(reslist)=refvec
+  reslist=lapply(reslist,FUN=function(vec){vec[which.max(nchar(vec))]})
+}
+
+# A list of event_type matches for each unique stormdata$EVTYPE after 2nd attempt
+textmatched2=textmatcher2(event_types,notmatched)
+
+# A vector of (unique) unmatched elements from stormdata$EVTYPE after 2nd matching attempt
+notmatched=notmatched[sapply(textmatched2,FUN=function(textlist){length(unlist(textlist))==0})]
+
+# Extracting the matches from the 1st and 2nd lists
+EVTYPE_match=NULL
+Event_match=NULL
+for(i in 1:length(textmatched1)){
+  if(length(textmatched1[[i]]!=0)){
+    EVTYPE_match=c(EVTYPE_match,names(textmatched1[i]))
+    Event_match=c(Event_match,textmatched1[[i]])
+  }
+}
+for(i in 1:length(textmatched2)){
+  if(length(textmatched2[[i]]!=0)){
+    EVTYPE_match=c(EVTYPE_match,names(textmatched2[i]))
+    Event_match=c(Event_match,textmatched2[[i]])
+  }
+}
+```
+
+We then try to replace the existing EVTYPE with its corresponding matched Event Type as shown below. Next, we seek to understand what is the % coverage of all the recorded events with a matching Event Type.
+
+```{r}
+stormdata<-mutate(stormdata,EVTYPE_mod=EVTYPE)
+for(i in 1:length(Event_match)){
+  stormdata<-mutate(stormdata,EVTYPE_mod=replace(EVTYPE_mod,which(EVTYPE_mod==EVTYPE_match[i]),Event_match[i]))
+}
+
+#which/how many EVTYPES are found in official event_types?
+sum(stormdata$EVTYPE %in% event_types)#before work above
+sum(stormdata$EVTYPE_mod %in% event_types)#after work above
+sum(stormdata$EVTYPE_mod %in% event_types)/nrow(stormdata) #percentage coverage
+```
+
+We observe that such a manual matching process only contributed in a slight increase in the % coverage of events recorded. Thus, we need to identify whether there are any commonly recorded EVTYPE that has not yet been matched to an Event Type. We define a function that returns a vector of EVTYPE to be matched to give us a x% coverage.
+
+```{r}
+# Takes an input vector of names and a reference vector, outputs a
+# vector of names that needs to be matched in order to achieve x% coverage
+topx=function(textvec,refvec,coverage=0.9){
+  total=length(textvec); curr=sum(textvec %in% refvec)/total
+  textvec=textvec[which(!(textvec %in% refvec))] #taking what does not match
+  EVTYPE_counts=sort(table(textvec),decreasing = T) #table frequency of unmatched names
+  i=0
+  while(curr<coverage){
+    i=i+1
+    curr=curr+(EVTYPE_counts[i]/total)
+  }
+  print(paste0('Percentage Coverage: ',round(curr*100,1),'%'))
+  return(EVTYPE_counts[1:i])
+}
+topx(stormdata$EVTYPE_mod,event_types,0.995)
+```
+
+We thus observe that we can achieve 99.5% coverage of all recorded events simply by matching 4 EVTYPES. The manual replacement is done below and a resulting match directory is created to show all the matched EVTYPE and its corresponding Event Type.
+
+```{r}
+stormdata<-stormdata %>%
+  mutate(EVTYPE_mod=replace(EVTYPE_mod,which(EVTYPE_mod=='TSTM WIND'),'THUNDERSTORM WIND')) %>%
+  mutate(EVTYPE_mod=replace(EVTYPE_mod,which(EVTYPE_mod=='MARINE TSTM WIND'),'MARINE THUNDERSTORM WIND')) %>%
+  mutate(EVTYPE_mod=replace(EVTYPE_mod,which(EVTYPE_mod=='URBAN/SML STREAM FLD'),'HEAVY RAIN')) %>%
+  mutate(EVTYPE_mod=replace(EVTYPE_mod,which(EVTYPE_mod=='WILD/FOREST FIRE'),'WILDFIRE'))
+
+sum(stormdata$EVTYPE_mod %in% event_types)/nrow(stormdata) #percentage coverage
+
+EVTYPE_match=c(EVTYPE_match,'TSTM WIND','MARINE TSTM WIND','URBAN/SML STREAM FLD','WILD/FOREST FIRE')
+Event_match=c(Event_match,'THUNDERSTORM WIND','MARINE THUNDERSTORM WIND','HEAVY RAIN','WILDFIRE')
+match_table=data.frame(EVTYPE_match,Event_match)
+notmatched=notmatched[!(notmatched %in% EVTYPE_match)]
+rm(list=setdiff(ls(), c("stormdata","event_types","match_table","notmatched")))
+```
+
+## Results
+
+### Analysis of Health Impact
+
+In this segment, we attempt to understand which Event Type is most harmful with respect to population health. For this purpose, we will define impact to population health as the sum of Fatalities and Injuries.
+
+We start with a preliminary inspection of the health impact by grouping the data into its respective Event Types. As per before, we want to ensure that the EVTYPES we are studying has adequate % coverage of the total health impact summed across all incidents. 
+
+```{r}
+health_impact<-stormdata %>%
+  select(EVTYPE_mod,FATALITIES,INJURIES) %>%
+  group_by(EVTYPE_mod) %>%
+  summarize(FATALITIES=sum(FATALITIES),INJURIES=sum(INJURIES),TOTAL=FATALITIES+INJURIES) %>%
+  arrange(desc(TOTAL),desc(FATALITIES),desc(INJURIES))
+
+cum_health=sum(health_impact$TOTAL)
+curr=0; i=0; coverage=0.995
+while(curr<coverage){
+  i=i+1
+  curr=curr+health_impact$TOTAL[i]/cum_health
+}
+reqvec=health_impact$EVTYPE_mod[1:i]
+reqvec[which(!(reqvec %in% event_types))]
+```
+
+From the above, we see that a further 5 EVTYPES need to be matched to one of the official Event Types in order to achieve at least 99.5% coverage of total health impact. We do this with the help of *grep* and update the match directory accordingly.
+
+```{r}
+stormdata<-stormdata %>%
+  mutate(EVTYPE_mod=replace(EVTYPE_mod,grep('HURRICANE',EVTYPE_mod),'HURRICANE (TYPHOON)')) %>%
+  mutate(EVTYPE_mod=replace(EVTYPE_mod,grep('GLAZE',EVTYPE_mod),'FROST/FREEZE')) %>%
+  mutate(EVTYPE_mod=replace(EVTYPE_mod,grep('WILD',EVTYPE_mod),'WILDFIRE')) %>%
+  mutate(EVTYPE_mod=replace(EVTYPE_mod,grep('LANDSLIDE|LANDSLUMP',EVTYPE_mod),'DEBRIS FLOW')) %>%
+  mutate(EVTYPE_mod=replace(EVTYPE_mod,grep('WIN(.*) MIX',EVTYPE_mod),'WINTER WEATHER'))
+
+# Adding to the table of matched EVTYPES
+EVTYPE_match=NULL; Event_match=NULL
+regexpvec=c('HURRICANE','GLAZE','WILD','LANDSLIDE|LANDSLUMP','WIN(.*) MIX')
+replacevec=c('HURRICANE (TYPHOON)','FROST/FREEZE','WILDFIRE','DEBRIS FLOW','WINTER WEATHER')
+for(i in 1:5){
+  tempvec=health_impact$EVTYPE_mod[grep(regexpvec[i],health_impact$EVTYPE_mod)]
+  tempvec=tempvec[(!tempvec %in% event_types)]
+  EVTYPE_match=c(EVTYPE_match,tempvec)
+  Event_match=c(Event_match,rep(replacevec[i],length(tempvec)))
+  notmatched=notmatched[!notmatched %in% tempvec]
+}
+match_table=rbind(match_table,data.frame(EVTYPE_match,Event_match))
+
+rm(list=setdiff(ls(), c("stormdata","event_types","match_table","notmatched")))
+```
+
+With the above matching done, we proceed once again to analyze the health impact by grouping the data into Event Types. The dataframe is arranged in descending order for health impact. A chart of mean health impact is plotted for each Event Type.
+
+```{r}
+health_impact<-stormdata %>%
+  select(EVTYPE_mod,FATALITIES,INJURIES) %>%
+  filter(EVTYPE_mod %in% event_types) %>%
+  mutate(TOTAL=FATALITIES+INJURIES) %>%
+  group_by(EVTYPE_mod) %>%
+  summarize(IMPACT_MEAN=mean(TOTAL),FATALITIES=sum(FATALITIES),INJURIES=sum(INJURIES),TOTAL=sum(TOTAL)) %>%
+  arrange(desc(TOTAL),desc(FATALITIES),desc(INJURIES))
+health_impact
+qplot(EVTYPE_mod,IMPACT_MEAN,data=health_impact)+theme(axis.text.x = element_text(angle = 90, hjust = 1))+labs(x='Event Type',y='Mean Health Impact',title='Mean Health Impact per instance of each Event Type')
+```
+
+From the above, we can see that the top 3 Event Types that caused greatest cumulative health impact are Tornadoes, Thunderstorm Winds, and Excessive Heat. On the other hand, the Event Types that deal the greatest health impact per incident are Tsunamis, Excessive Heat, and Hurricane (Typhoon). Each occurence has a health impact (injured or killed persons) of 8, 5, and 5 respectively.
+
+### Analysis of Economic Impact
+
+In this segment, we take a look at the Economic Impact of the different Event Types. We define Economic Impact as the sum of Property Damage and Crop Damage, which is recorded in the dataset as PROPDMG and CROPDMG respectively. However, we need to be mindful that for each record, there is a unit of measurement PROPDMGEXP and CROPDMGEXP that describes the scale of impact. 'K', 'M', and 'B' refers to thousands, millions, and billions in dollars respectively. The '' in PROPDMGEXP and CROPDMGEXP is assumed to reflect unit scale, while the other readings are ignored.
+
+```{r}
+economic_impact<-stormdata %>%
+  select(EVTYPE_mod,PROPDMG,PROPDMGEXP,CROPDMG,CROPDMGEXP) %>%
+  filter(EVTYPE_mod %in% event_types) %>%
+  mutate(PROPDMGEXP=trimws(toupper(PROPDMGEXP)),CROPDMGEXP=trimws(toupper(CROPDMGEXP))) %>%
+  filter(PROPDMGEXP==''|PROPDMGEXP=='K'|PROPDMGEXP=='M'|PROPDMGEXP=='B') %>%
+  filter(CROPDMGEXP==''|CROPDMGEXP=='K'|CROPDMGEXP=='M'|CROPDMGEXP=='B') %>%
+  mutate(PROPDMGEXP_mod=as.numeric(sapply(PROPDMGEXP,FUN=function(item){
+    if(item=='K'){item=1000}
+    else if(item==''){item=1}
+    else if(item=='M'){item=1000000}
+    else if (item=='B'){item=1000000000}}))) %>%
+  mutate(CROPDMGEXP_mod=as.numeric(sapply(CROPDMGEXP,FUN=function(item){
+    if(item=='K'){item=1000}
+    else if(item==''){item=1}
+    else if(item=='M'){item=1000000}
+    else if (item=='B'){item=1000000000}}))) %>%
+  mutate(PROPDMG_mod=PROPDMG*PROPDMGEXP_mod,CROPDMG_mod=CROPDMG*CROPDMGEXP_mod,TOTALDMG=PROPDMG_mod+CROPDMG_mod) %>%
+  group_by(EVTYPE_mod) %>%
+  summarize(MEANDMG=mean(TOTALDMG),PROPDMG=sum(PROPDMG_mod),CROPDMG=sum(CROPDMG_mod),TOTALDMG=sum(TOTALDMG)) %>%
+  arrange(desc(TOTALDMG),desc(PROPDMG),desc(CROPDMG))
+economic_impact
+qplot(EVTYPE_mod,MEANDMG,data=economic_impact)+theme(axis.text.x = element_text(angle = 90, hjust = 1))+labs(x='Event Type',y='Mean Economic Impact',title='Mean Economic Impact per instance of each Event Type')
+```
+
+From the above, we can see that the top 3 Event Types that caused greatest cumulative economic impact are Floods, Hurricane (Typhoon), and Tornadoes. On the other hand, the Event Types that deal the greatest economic impact per incident are Hurricane (Typhoon), Storm Surge/Tide, and Tropical Storm. Each occurence cost about 300m, 100m and 12m respectively.
+
